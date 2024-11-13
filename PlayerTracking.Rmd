@@ -1,0 +1,636 @@
+---
+title: "Player Tracking"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+<style>.dataTables_scrollBody {
+    max-height: 100% !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+
+##options(repos = list(CRAN="http://cran.rstudio.com/"))
+
+library(flexdashboard)
+library(tidyverse)
+library(readxl)
+library(here)
+library(knitr)
+library(lubridate)
+library(dplyr)
+library(reshape2)
+library(plotly)
+library(crosstalk)
+library(broom)
+library(DT)
+library(kableExtra)
+library(ggthemes)
+
+##Game 1 tracking data
+Game1_Tracking_AwayTeam <- read_csv(here("Data","Sample_Game_1_RawTrackingData_Away_Team.csv"),skip = 3, col_names = F)
+
+Game1_ColNames <- read_csv(here("Data","Sample_Game_1_RawTrackingData_Away_Team.csv"), n_max = 2)
+
+colnames(Game1_Tracking_AwayTeam) <- c(as.character(Game1_ColNames[2,]))
+colnames(Game1_Tracking_AwayTeam)[32] <- c("Ball_X")
+colnames(Game1_Tracking_AwayTeam)[33] <- c("Ball_Y")
+colnames(Game1_Tracking_AwayTeam)[3] <- c("Time")
+
+num_1 <- na.omit(as.numeric(Game1_ColNames[1,])) 
+name_1 <- as.character(Game1_ColNames[2,-c(1:3)])
+name_1 <- name_1[name_1 != "NA"] 
+name_1 <- str_replace_all(name_1, " ", "")
+
+name_X <- paste0(name_1, "_X") 
+name_Y <- paste0(name_1, "_Y")
+
+X.inds <- seq(4, ncol(Game1_Tracking_AwayTeam)-2, by = 2) 
+Y.inds <- seq(5, ncol(Game1_Tracking_AwayTeam)-2, by = 2) 
+names(Game1_Tracking_AwayTeam)[X.inds] <- name_X 
+names(Game1_Tracking_AwayTeam)[Y.inds] <- name_Y 
+
+
+##Game 1 events data
+Game1_Events <- read_csv(here("Data","Sample_Game_1_RawEventsData.csv"))
+
+
+##Game 2 tracking data
+Game2_Tracking_AwayTeam <- read_csv(here("Data","Sample_Game_2_RawTrackingData_Away_Team.csv"),skip = 3, col_names = F)
+
+Game2_ColNames <- read_csv(here("Data","Sample_Game_2_RawTrackingData_Away_Team.csv"), n_max = 2)
+
+colnames(Game2_Tracking_AwayTeam) <- c(as.character(Game2_ColNames[2,]))
+colnames(Game2_Tracking_AwayTeam)[28] <- c("Ball_X")
+colnames(Game2_Tracking_AwayTeam)[29] <- c("Ball_Y")
+colnames(Game2_Tracking_AwayTeam)[3] <- c("Time")
+
+num_2 <- na.omit(as.numeric(Game2_ColNames[1,])) 
+name_2 <- as.character(Game2_ColNames[2,-c(1:3)])
+name_2 <- name_2[name_2 != "NA"] 
+name_2 <- str_replace_all(name_2, " ", "")
+
+name2_X <- paste0(name_2, "_X") 
+name2_Y <- paste0(name_2, "_Y")
+
+X.inds2 <- seq(4, ncol(Game2_Tracking_AwayTeam)-2, by = 2) 
+Y.inds2 <- seq(5, ncol(Game2_Tracking_AwayTeam)-2, by = 2) 
+names(Game2_Tracking_AwayTeam)[X.inds2] <- name2_X 
+names(Game2_Tracking_AwayTeam)[Y.inds2] <- name2_Y 
+
+
+##Game 2 events data
+Game2_Events <- read_csv(here("Data","Sample_Game_2_RawEventsData.csv"))
+
+##Assessement data
+Assessment <- read_csv(here("Data","Assessement_Data.csv"))
+
+toDelete <- seq(1, nrow(Assessment), 2)
+Assessment <- Assessment[-toDelete ,]
+
+
+##Removing duplicate from dataframe that includes max running speed
+##Does not work as it appears to be assessing only first or last values 
+##and not the whole observation
+##
+##test <- Assessment[duplicated(Assessment[,4:6]),]
+
+NoMaxRunning <- subset(Assessment, Assessment$assessment != "Max Running Speed")
+
+duplicates <- NoMaxRunning[duplicated(NoMaxRunning[,4:6]),]
+
+NoDuplicates <- NoMaxRunning[!duplicated(NoMaxRunning[,4:6]),]
+
+duplicateAverages <- duplicates %>% group_by(athletes,date,metric) %>% mutate(value=round(mean(value),4)) %>% slice(1)
+
+FinalAssessment <- rbind(NoDuplicates,duplicateAverages)
+
+FinalAssessment$date <- as.Date(FinalAssessment$date, format = "%m/%d/%y")
+
+
+MaxRunningSpeed <- subset(Assessment, Assessment$assessment == "Max Running Speed")
+
+SprintSpeed30Y <- subset(MaxRunningSpeed, MaxRunningSpeed$metric == "0-30y")
+
+SprintSpeed30Y$date <- as.Date(SprintSpeed30Y$date, format = "%m/%d/%y")
+
+SprintDuplicates <- SprintSpeed30Y[duplicated(SprintSpeed30Y[,4:6]),]
+
+SprintAverages <- SprintDuplicates %>% group_by(athletes,date,metric) %>% mutate(value=round(mean(value),4)) %>% slice(1)
+
+FinalAssessment <- rbind(FinalAssessment,SprintAverages)
+
+
+FinalAssessment <- FinalAssessment[order(FinalAssessment$athletes, FinalAssessment$date),]
+
+
+##Testing making each metric a header and filling values as observations
+sepTest <- FinalAssessment[ , c(1,4,6:7)]
+
+flipTest <- dcast(sepTest,athletes + date + value~metric)
+
+
+##Testing grabbing just the most recent value for each metric using ##athlete 1
+athlete1Test <- subset(Assessment, Assessment$athletes == "athlete 1")
+
+mostRecent <- athlete1Test %>% group_by(metric) %>% summarise(Last_value = last(value))
+
+##Pulling the most recent value for each metric for all athletes
+allMostRecent <- FinalAssessment %>% group_by(athletes,metric) %>% summarise(Last_value = last(value))
+
+sum(is.na(allMostRecent))
+
+#calculate quantiles by metric
+q = c(.30, .60, .90)
+
+quantiles <- allMostRecent %>%
+  group_by(metric) %>%
+  summarize(quant30 = quantile(Last_value, probs = q[1]), 
+            quant60 = quantile(Last_value, probs = q[2]),
+            quant90 = quantile(Last_value, probs = q[3]))
+
+
+quantileMerge <- merge(allMostRecent,quantiles, by="metric")
+
+quantileMerge <- quantileMerge %>% mutate(level = with(quantileMerge, ifelse(Last_value <= quant30, "Poor",
+          ifelse(Last_value > quant30 & Last_value <= quant60, "Average",
+                 ifelse(Last_value > quant60 & Last_value  <= quant90, "Good", "Excellent")))))
+                 
+
+
+
+
+
+
+
+
+```
+
+Metric Definitions and Evaluation
+==============================================================
+
+Column 
+-------------------------------------
+
+### Definitions
+
+a)
+
+- Concentric Impulse: Force output at takeoff of jump.
+
+- Concentric Impulse - 100ms: Force applied in the first 100ms of jump motion.
+
+- Concentric Mean Power / Body Weight: Mean force applied during the takeoff phase.
+
+- Eccentric Mean Power / Body Weight: Mean force applied during loading phase. 
+
+- RSI - Modified: Ratio of flight time and time in contact with the ground or 
+  how high and how fast.
+
+- Vertical Velocity @ Take off: How fast an individual leaves the ground 
+
+Column 
+-------------------------------------
+
+### Thougths on Metrics 
+
+b)
+
+- I believe this is a good combination of metrics not just for the sport presented
+  but for all sports. 
+
+- There is a good combination of strength, power, speed, and endurance to get a            complete picture of an individuals overall athleticism and readiness to perform. 
+
+- With my background knowledge of the sport in question as well as various fitness
+  metrics, no additional measurements come to mind to add to the list provided. 
+  
+- As mentioned before, I believe this is a good combination, or at the least a very
+  good starting point for being able to gauge an individuals athleticism. 
+
+Most Recent Assessments 
+==============================================================
+
+Column {data-width=1000, data-height=1000}
+--------------------------------------------------------------
+
+
+```{r, plotly-crosstalk, out.height="100%"}
+
+
+
+shared_Quantiles <- SharedData$new(quantileMerge, group = "shared_obj")
+
+# send the group to the filtering selection box
+filter_select(id = "id-selector", label = "Athlete",                                              sharedData = shared_Quantiles, group = ~ athletes)
+filter_select(id = "id-selector", label = "Level", 
+            sharedData = shared_Quantiles, group = ~ level)
+filter_checkbox(id = "id-selector", label = "Metric", 
+             sharedData = shared_Quantiles, group = ~ metric, columns = 7)
+
+
+# datatable(shared_Quantiles, fillContainer = TRUE)
+
+
+
+# pal <- c("red", "yellow", "green", "blue")
+# pal <- setNames(pal, c("Poor", "Average", "Good", "Excellent"))
+##fill = list(color=list(pal))
+
+# shared_quantileMerge <- SharedData$new(quantileMerge)
+# 
+# 
+# 
+# fig2 <- shared_quantileMerge %>% plot_ly(
+#   type = 'table',
+#   columnwidth = c(500) ,
+#   header = list(
+#     values = c("Record",names(quantileMerge)),
+#   align = c('left', rep('center', ncol(quantileMerge))),
+#   line = list(width = 1, color = 'black'),
+#   fill = list(color = 'rgb(202, 210, 222)'),
+#   font = list(family = "Arial", size = 14, color = "black")
+#   ),
+#   cells = list(
+#     values = rbind(
+#       rownames(quantileMerge), 
+#       t(as.matrix(unname(quantileMerge)))
+#     ),
+#     align = c('left', rep('center', ncol(quantileMerge))),
+#     line = list(color = "black", width = 1),
+#     fill = list(color = c('white')),
+#     font = list(family = "Arial", size = 12, color = c("black"))
+#   ))
+# 
+# 
+# filter_checkbox(id = "metric", label = "Metric",
+#                 sharedData = shared_quantileMerge, group = ~metric)
+# filter_select(id = "athletes", label = "Athlete",
+#              sharedData = shared_quantileMerge, group = ~athletes)
+#       
+# 
+# fig2
+
+
+# bscols(
+#        list(
+#             filter_checkbox(id = "metric", label = "Metric",
+#                     sharedData = shared_quantileMerge, group = ~metric),
+#             filter_select(id = "athletes", label = "Athlete",
+#                     sharedData = shared_quantileMerge, group = ~athletes)
+#       ),
+# 
+# 
+# fig2)
+
+
+
+
+# fill = list(color = ~ quantileMerge$level,
+#     colors = c("red", "yellow", "green", "blue"))
+
+# fill = dict(color='rgb(245, 245, 245)',
+#                                             'rgb(242, 63, 63)' if val = "Poor" else 'rgb(237, 221, 38)' if val = "Average"  else 'rgb(88, 237, 38)' if val = "Good" else 'rgb(38, 230, 237)' for val in vals ),
+
+# 
+# fill = list(color = c('rgb(235, 193, 238)', 'rgb(235, 193, 238)','rgb(235, 193, 238)','rgb(235, 193, 238)','rgb(235, 193, 238)','rgb(235, 193, 238)','rgb(235, 193, 238)', 'rgba(228, 222, 249, 0.65)'))
+
+```
+
+
+```{r}
+
+datatable(shared_Quantiles, fillContainer = TRUE)
+
+```
+
+
+Historical Assessments
+==============================================================
+
+Column {data-width=1000, data-height=1000}
+--------------------------------------------------------------
+
+
+```{r}
+
+shared_Assessments <- SharedData$new(FinalAssessment, group = "shared_obj")
+
+# send the group to the filtering selection box
+filter_select(id = "id-selector", label = "Athlete",                                              sharedData = shared_Assessments, group = ~ athletes)
+filter_select(id = "id-selector", label = "Position", 
+            sharedData = shared_Assessments, group = ~ position)
+filter_select(id = "id-selector", label = "Metric", 
+             sharedData = shared_Assessments, group = ~ metric)
+
+
+datatable(shared_Assessments)
+```
+
+
+Change Over Time
+==============================================================
+
+Column {data-width=1000, data-height=1000}
+--------------------------------------------------------------
+
+
+```{r}
+
+
+shared_data <- SharedData$new(FinalAssessment, group = "shared_obj")
+
+
+p <- shared_data %>% 
+  plot_ly(x = ~date, y = ~value,
+              hoverinfo = "text",
+              type = "scatter",
+              mode ="lines",
+              color = "metric",
+              text = ~paste("Athlete:", athletes,
+                            "<br>date:", date,
+                            "<br>metric:", metric,
+                            "<br>value:", value)) %>% 
+  group_by(metric) %>% 
+  add_markers(size = 3) %>%
+  layout(xaxis = list(title = "Date"),
+         yaxis = list(title = "Metric Value"),
+         legend = list(font = list(size = 16)))
+
+
+
+filter_checkbox(id = "metric", label = "Metric",
+                sharedData = shared_data, group = ~metric, columns = 7)
+filter_select(id = "athlete", label = "Athlete",
+                sharedData = shared_data, group = ~athletes)
+           
+p
+
+
+
+
+
+# p <- ggplot(athlete1Flip, aes(x=date, y=`Body Fat %`)) +
+#   geom_point() +
+#   geom_line(data=athlete1Flip[!is.na(athlete1Flip$`Body Fat %`),],aes(x=date, y= `Body Fat %`), color="black")
+# 
+#         
+# p
+
+
+# for(i in 1:nlevels(athlete1Test$metric)) {
+#   
+#   p <- ggplot(athlete1Test[athlete1Test$metric == levels(athlete1Test$metric)[i]], aes(x=date, y=metric)) +
+#   geom_point() +
+#   geom_line()
+# 
+# p
+# 
+# }
+
+
+# athlete1Flip <- subset(flipTest, flipTest$athletes == "athlete 1")
+# 
+# p <- ggplot(athlete1Flip, aes(x=date, y=`Body Fat %`)) +
+#   geom_point() +
+#   geom_line(data=athlete1Flip[!is.na(athlete1Flip$`Body Fat %`),],aes(x=date, y= `Body Fat %`), color="black")
+# 
+#         
+# p
+
+
+
+
+
+```
+
+
+Game 1 Match Analysis
+==============================================================
+
+
+Column
+--------------------------------------------------------------
+
+### Distance Traveled 
+
+```{r}
+
+Game1_Tracking_AwayTeam[is.na(Game1_Tracking_AwayTeam)] <- 0
+
+rows <- nrow(Game1_Tracking_AwayTeam)
+  
+# difference in rows of entire dataframe
+Game1rowDiffernces <- abs(Game1_Tracking_AwayTeam[-1,] - Game1_Tracking_AwayTeam[-rows,])
+
+Game1_Tracking_AwayTeam <- Game1_Tracking_AwayTeam %>% mutate(Game1_Tracking_AwayTeam,       Player15_dist_travelled = sqrt((Player15_X - lag(Player15_X))^2 + (Player15_Y - lag(Player15_Y))^2),
+      Player16_dist_travelled = sqrt((Player16_X - lag(Player16_X))^2 + (Player16_Y - lag(Player16_Y))^2),
+      Player17_dist_travelled = sqrt((Player17_X - lag(Player17_X))^2 + (Player17_Y - lag(Player17_Y))^2) ,
+      Player18_dist_travelled = sqrt((Player18_X - lag(Player18_X))^2 + (Player18_Y - lag(Player18_Y))^2) ,
+      Player19_dist_travelled = sqrt((Player19_X - lag(Player19_X))^2 + (Player19_Y - lag(Player19_Y))^2) ,
+      Player20_dist_travelled = sqrt((Player20_X - lag(Player20_X))^2 + (Player20_Y - lag(Player20_Y))^2) ,
+      Player21_dist_travelled = sqrt((Player21_X - lag(Player21_X))^2 + (Player21_Y - lag(Player21_Y))^2) ,
+      Player22_dist_travelled = sqrt((Player22_X - lag(Player22_X))^2 + (Player22_Y - lag(Player22_Y))^2) ,
+      Player23_dist_travelled = sqrt((Player23_X - lag(Player23_X))^2 + (Player23_Y - lag(Player23_Y))^2) ,
+      Player24_dist_travelled = sqrt((Player24_X - lag(Player24_X))^2 + (Player24_Y - lag(Player24_Y))^2) ,
+      Player25_dist_travelled = sqrt((Player25_X - lag(Player25_X))^2 + (Player25_Y - lag(Player25_Y))^2) ,
+      Player26_dist_travelled = sqrt((Player26_X - lag(Player26_X))^2 + (Player26_Y - lag(Player26_Y))^2) ,
+      Player27_dist_travelled = sqrt((Player27_X - lag(Player27_X))^2 + (Player27_Y - lag(Player27_Y))^2) ,
+      Player28_dist_travelled = sqrt((Player28_X - lag(Player28_X))^2 + (Player28_Y - lag(Player28_Y))^2)  )
+
+
+game1TotalDistance <- data.frame(colSums(Game1_Tracking_AwayTeam[,-c(1:33)], na.rm = TRUE))
+
+game1TotalDistance['Player'] <- as.character(c(25,15:24,26:28))
+
+colnames(game1TotalDistance)[1] <- "Total_Distance"
+
+
+p <-ggplot(data=game1TotalDistance, aes(x=Player, y=Total_Distance)) +
+  geom_bar(stat="identity", color="black", fill="lightblue")+
+  labs(title="Total Distance Traveled during Game 1", x="Player", y = "Distance")
+
+p
+
+
+
+```
+
+### Average Speed 
+
+```{r}
+
+Game1_Tracking_AwayTeam <- Game1_Tracking_AwayTeam %>% mutate(Game1_Tracking_AwayTeam,       Player15_speed = (Player15_dist_travelled/Time),
+      Player16_speed = (Player16_dist_travelled/Time),
+      Player17_speed = (Player17_dist_travelled/Time),
+      Player18_speed = (Player18_dist_travelled/Time),
+      Player19_speed = (Player19_dist_travelled/Time),
+      Player20_speed = (Player20_dist_travelled/Time),
+      Player21_speed = (Player21_dist_travelled/Time),
+      Player22_speed = (Player22_dist_travelled/Time),
+      Player23_speed = (Player23_dist_travelled/Time),
+      Player24_speed = (Player24_dist_travelled/Time),
+      Player25_speed = (Player25_dist_travelled/Time),
+      Player26_speed = (Player26_dist_travelled/Time),
+      Player27_speed = (Player27_dist_travelled/Time),
+      Player28_speed = (Player28_dist_travelled/Time))
+
+game1Speeds <- Game1_Tracking_AwayTeam[c(48:61)]
+
+game1Speeds[game1Speeds==0] <- NA
+                                                    
+game1AverageSpeed <- data.frame(colMeans(game1Speeds, na.rm = TRUE))
+
+game1AverageSpeed['Player'] <- as.character(c(15:28))
+
+colnames(game1AverageSpeed)[1] <- "Avg_Speed"
+
+
+p <-ggplot(data=game1AverageSpeed, aes(x=Player, y=Avg_Speed)) +
+  geom_bar(stat="identity", color="black", fill="lightblue")+
+  labs(title="Average Speed during Game 1", x="Player", y = "Average Speed")
+
+p
+
+```
+
+Column
+--------------------------------------------------------------
+
+### Shot Attemps by Team
+
+```{r}
+
+Game1Shots <- subset(Game1_Events, Game1_Events$Type == "SHOT")
+
+ggplot(data=Game1Shots, aes(fill=Type, x=Team)) + 
+  geom_bar(position="stack", stat = "count", color="black", fill="lightblue") +
+ labs(title = "Shot Attempts by Team", x = "Team", y = "Count") 
+
+```
+
+### Interceptions by Team
+
+```{r}
+
+Game1Interceptions <- subset(Game1_Events, Game1_Events$Subtype == "INTERCEPTION")
+
+ggplot(data=Game1Interceptions, aes(fill=Subtype, x=Team)) + 
+  geom_bar(position="stack", stat = "count", color="black", fill="lightblue") +
+ labs(title = "Interceptions by Team", x = "Team", y = "Count") 
+
+```
+
+
+Game 2 Match Analysis
+==============================================================
+
+Column
+--------------------------------------------------------------
+
+### Distance Traveled 
+
+```{r}
+
+Game2_Tracking_AwayTeam[is.na(Game2_Tracking_AwayTeam)] <- 0
+
+rows <- nrow(Game2_Tracking_AwayTeam)
+  
+# difference in rows of entire dataframe
+Game2rowDiffernces <- abs(Game2_Tracking_AwayTeam[-1,] - Game2_Tracking_AwayTeam[-rows,])
+
+Game2_Tracking_AwayTeam <- Game2_Tracking_AwayTeam %>% mutate(Game2_Tracking_AwayTeam,       Player15_dist_travelled = sqrt((Player15_X - lag(Player15_X))^2 + (Player15_Y - lag(Player15_Y))^2),
+      Player16_dist_travelled = sqrt((Player16_X - lag(Player16_X))^2 + (Player16_Y - lag(Player16_Y))^2),
+      Player17_dist_travelled = sqrt((Player17_X - lag(Player17_X))^2 + (Player17_Y - lag(Player17_Y))^2) ,
+      Player18_dist_travelled = sqrt((Player18_X - lag(Player18_X))^2 + (Player18_Y - lag(Player18_Y))^2) ,
+      Player19_dist_travelled = sqrt((Player19_X - lag(Player19_X))^2 + (Player19_Y - lag(Player19_Y))^2) ,
+      Player20_dist_travelled = sqrt((Player20_X - lag(Player20_X))^2 + (Player20_Y - lag(Player20_Y))^2) ,
+      Player21_dist_travelled = sqrt((Player21_X - lag(Player21_X))^2 + (Player21_Y - lag(Player21_Y))^2) ,
+      Player22_dist_travelled = sqrt((Player22_X - lag(Player22_X))^2 + (Player22_Y - lag(Player22_Y))^2) ,
+      Player23_dist_travelled = sqrt((Player23_X - lag(Player23_X))^2 + (Player23_Y - lag(Player23_Y))^2) ,
+      Player24_dist_travelled = sqrt((Player24_X - lag(Player24_X))^2 + (Player24_Y - lag(Player24_Y))^2) ,
+      Player25_dist_travelled = sqrt((Player25_X - lag(Player25_X))^2 + (Player25_Y - lag(Player25_Y))^2) ,
+      Player26_dist_travelled = sqrt((Player26_X - lag(Player26_X))^2 + (Player26_Y - lag(Player26_Y))^2) )
+
+
+game2TotalDistance <- data.frame(colSums(Game2_Tracking_AwayTeam[,-c(1:29)], na.rm = TRUE))
+
+game2TotalDistance['Player'] <- as.character(c(25,15:24,26))
+
+colnames(game2TotalDistance)[1] <- "Total_Distance"
+
+
+p <-ggplot(data=game2TotalDistance, aes(x=Player, y=Total_Distance)) +
+  geom_bar(stat="identity", color="black", fill="lightblue")+
+  labs(title="Total Distance Traveled during Game 2", x="Player", y = "Distance")
+
+p
+
+
+
+
+```
+
+### Average Speed
+
+```{r}
+Game2_Tracking_AwayTeam <- Game2_Tracking_AwayTeam %>% mutate(Game2_Tracking_AwayTeam,       Player15_speed = (Player15_dist_travelled/Time),
+      Player16_speed = (Player16_dist_travelled/Time),
+      Player17_speed = (Player17_dist_travelled/Time),
+      Player18_speed = (Player18_dist_travelled/Time),
+      Player19_speed = (Player19_dist_travelled/Time),
+      Player20_speed = (Player20_dist_travelled/Time),
+      Player21_speed = (Player21_dist_travelled/Time),
+      Player22_speed = (Player22_dist_travelled/Time),
+      Player23_speed = (Player23_dist_travelled/Time),
+      Player24_speed = (Player24_dist_travelled/Time),
+      Player25_speed = (Player25_dist_travelled/Time),
+      Player26_speed = (Player26_dist_travelled/Time))
+
+game2Speeds <- Game2_Tracking_AwayTeam[c(42:53)]
+
+game2Speeds[game2Speeds==0] <- NA
+                                                    
+game2AverageSpeed <- data.frame(colMeans(game2Speeds, na.rm = TRUE))
+
+game2AverageSpeed['Player'] <- as.character(c(15:26))
+
+colnames(game2AverageSpeed)[1] <- "Avg_Speed"
+
+
+p <-ggplot(data=game2AverageSpeed, aes(x=Player, y=Avg_Speed)) +
+  geom_bar(stat="identity", color="black", fill="lightblue")+
+  labs(title="Average Speed during Game 2", x="Player", y = "Average Speed")
+
+p
+
+```
+
+Column
+--------------------------------------------------------------
+
+### Shot Attemps by Team
+
+```{r}
+Game2Shots <- subset(Game2_Events, Game2_Events$Type == "SHOT")
+
+ggplot(data=Game2Shots, aes(fill=Type, x=Team)) + 
+  geom_bar(position="stack", stat = "count", color="black", fill="lightblue") +
+ labs(title = "Shot Attempts by Team", x = "Team", y = "Count") 
+
+```
+
+
+### Interceptions by Team
+
+```{r}
+
+Game2Interceptions <- subset(Game2_Events, Game2_Events$Subtype == "INTERCEPTION")
+
+ggplot(data=Game2Interceptions, aes(fill=Subtype, x=Team)) + 
+  geom_bar(position="stack", stat = "count", color="black", fill="lightblue") +
+ labs(title = "Interceptions by Team", x = "Team", y = "Count") 
+
+```
